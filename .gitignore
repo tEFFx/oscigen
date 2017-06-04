@@ -1,5 +1,8 @@
 [Bb]in
 [Oo]bj
-wav
+[Ww]av
+[Tt]emp
 
 *.o
+*.mp4
+*.wav
