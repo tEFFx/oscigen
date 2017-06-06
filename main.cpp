@@ -7,6 +7,15 @@
 #include <cmath>
 #include <sstream>
 
+//Vector helper macros
+#define length(a) (float)sqrt(a.x*a.x + a.y*a.y)
+#define normalize(a) a / length(a)
+#define dot(a,b) (a.x*b.x)+(a.y*b.y)
+
+//Math helper macros
+#define sign(a) a==0 ? 0 : (a>0 ? 1 : -1)
+
+//TODO: Screen resolution should not be constant and probably be exposed as a command line argument
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 
@@ -75,6 +84,7 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
+	//TODO: Figure out a way to enable anti-aliasing on a RenderTexture and enable it
 	sf::RenderTexture target;
 	target.create(WINDOW_WIDTH, WINDOW_HEIGHT);
 
@@ -170,17 +180,44 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 
 	playbackPos += centerSnap;
 
-	sf::Vertex vertices[length];
+	sf::Vector2f wavePos[length];
 	for (uint16 i = 0; i < length; i++) {
 		short sample = 0;
 		uint32 samplePos = playbackPos + i * channels;
 		if(samplePos < numSamples)
 			sample = averageSample(samples, samplePos, channels);
 
-		vertices[i] = sf::Vector2f(i * interval, verticalCenter - sample * invAmplitude);
+		wavePos[i] = sf::Vector2f(i * interval, verticalCenter - sample * invAmplitude);
 	}
 
-	target.draw(vertices, length, sf::LinesStrip);
+	//TODO: Expose this as a command line argument
+	const float thickness = 3.0f;
+	const uint16 triCount = length * 2 - 4;
+	float quadDir = 1;
+	sf::Vertex vertices[triCount];
+	for(uint16 i = 1; i < length - 1; i++) {
+		//TODO: Fix issue with tightly packed triangles overlapping
+		//Happens usually in a corner, should probably try to reduce amount of sample points before triangulating
+		sf::Vector2f prev = wavePos[i] - wavePos[i - 1];
+		prev = normalize(prev);
+		sf::Vector2f prevN = sf::Vector2f(-prev.y, prev.x);
+
+		sf::Vector2f next = wavePos[i + 1] - wavePos[i];
+		next = normalize(next);
+		sf::Vector2f nextN = sf::Vector2f(-next.y, next.x);
+
+		sf::Vector2f tangent = (prevN + nextN) * 0.5f;
+		tangent *= thickness * 0.5f;
+
+		sf::Vector2f pos = wavePos[i];
+		uint16 vertIndex = i * 2 - 2;
+		vertices[vertIndex] = pos - tangent;
+		vertices[vertIndex + 1] = pos + tangent;
+
+		quadDir = -quadDir;
+	}
+
+	target.draw(vertices, triCount, sf::TrianglesStrip);
 }
 
 short averageSample(const short* samples, const uint32 startIndex, const uint8 count) {
