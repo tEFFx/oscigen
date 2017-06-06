@@ -7,7 +7,6 @@
 #include <cmath>
 #include <sstream>
 
-#define SAMPLES_PER_FRAME 1470
 #define WINDOW_WIDTH 1280
 #define WINDOW_HEIGHT 720
 
@@ -21,6 +20,8 @@ short averageSample(const short* samples, const uint32 startIndex, const uint8 c
 int main(int argc, char* argv[])
 {
 	bool preview = true;
+	//TODO: Add command line argument to change this
+	int sampleLen = 1500;
 
 	std::string outputFile = "output.mp4";
 	std::vector<std::string> inputFiles;
@@ -39,6 +40,7 @@ int main(int argc, char* argv[])
 				std::cout << "Output: " << outputFile << std::endl;
 			}
 		} else {
+			//TODO: Add command line argument for gain
 			if(cmd == "-i" || cmd == "-o") {
 				prevCmd = std::string(argv[i]);
 			} else if(cmd == "-h") {
@@ -100,10 +102,10 @@ int main(int argc, char* argv[])
 
 		if(bufSize > 1) {
 			for (uint8 i = 0; i < bufSize - 1; i++) {
-				drawWaveform(target, *buffers[i + 1], sampleIndex, i, bufSize - 1, samplesPerFrame);
+				drawWaveform(target, *buffers[i + 1], sampleIndex, i, bufSize - 1, sampleLen);
 			}
 		} else {
-			drawWaveform(target, *buffers[0], sampleIndex, 0, 1, samplesPerFrame);
+			drawWaveform(target, *buffers[0], sampleIndex, 0, 1, sampleLen);
 		}
 
 		target.display();
@@ -134,7 +136,7 @@ int main(int argc, char* argv[])
 
 			int progress = ceil(((float)currentFrame / (float)numFrames) * 10000) / 100;
 			std::ostringstream title;
-			title << "Rendering... " << progress << "%";
+			title << "oscigen (" << progress << "%)";
 			window->setTitle(title.str());
 		}
 	}
@@ -162,12 +164,14 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 
 	uint16 centerSnap = 0;
     uint16 maxAmplitude = 0;
+	//TODO: Improve waveform lock to accomodate for quick envelope changes
+	//Maybe try to find frequency of sample and offset accordingly? (samples per phase * cycles / 2)
 	for (uint16 i = 0; i < length * 2; i += channels) {
 		uint32 samplePos = playbackPos + length + i;
 		if(samplePos >= numSamples)
 			break;
 
-		short sample = averageSample(samples, playbackPos + i + length, channels);
+		short sample = averageSample(samples, samplePos, channels);
 
 		if(sample >= maxAmplitude) {
 			maxAmplitude = sample;
@@ -182,9 +186,9 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 		short sample = 0;
 		uint32 samplePos = playbackPos + i * channels;
 		if(samplePos < numSamples)
-			sample = averageSample(samples, playbackPos + i * channels, channels);
+			sample = averageSample(samples, samplePos, channels);
 
-		vertices[i] = sf::Vector2f(i * interval, verticalCenter + sample * invAmplitude);
+		vertices[i] = sf::Vector2f(i * interval, verticalCenter - sample * invAmplitude);
 	}
 
 	target.draw(vertices, length, sf::LinesStrip);
