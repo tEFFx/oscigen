@@ -163,21 +163,10 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 	playbackPos *= channels;
 
 	uint16 centerSnap = 0;
-    uint16 maxAmplitude = 0;
-	//TODO: Improve waveform lock to accomodate for quick envelope changes
-	//Maybe try to find frequency of sample and offset accordingly? (samples per phase * cycles / 2)
-	for (uint16 i = 0; i < length * 2; i += channels) {
-		uint32 samplePos = playbackPos + length + i;
-		if(samplePos >= numSamples)
-			break;
-
-		short sample = averageSample(samples, samplePos, channels);
-
-		if(sample >= maxAmplitude) {
-			maxAmplitude = sample;
-			centerSnap = i;
-		}
-	}
+	while(averageSample(samples, playbackPos + centerSnap + length, channels) > 0)
+		centerSnap += channels;
+	while(averageSample(samples, playbackPos + centerSnap + length, channels) < 0)
+		centerSnap += channels;
 
 	playbackPos += centerSnap;
 
