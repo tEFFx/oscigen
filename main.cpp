@@ -8,12 +8,14 @@
 #include <sstream>
 
 //Vector helper macros
-#define length(a) (float)sqrt(a.x*a.x + a.y*a.y)
-#define normalize(a) a / length(a)
-#define dot(a,b) (a.x*b.x)+(a.y*b.y)
+#define length(a) (float)sqrt((a).x*(a).x + (a).y*(a).y)
+#define normalize(a) (a) / length(a)
+#define dot(a,b) ((a).x*(b).x)+((a).y*(b).y)
+#define project(a,b) (a)*(dot(a,b)/(length(a)*length(a)))
 
 //Math helper macros
-#define sign(a) a==0 ? 0 : (a>0 ? 1 : -1)
+#define sign(a) (a==0 ? 0 : (a>0 ? 1 : -1))
+#define clamp(a,b,c) ((a)<(b)?(b):((a)>(c)?(c):(a)))
 
 //TODO: Screen resolution should not be constant and probably be exposed as a command line argument
 #define WINDOW_WIDTH 1280
@@ -58,7 +60,8 @@ int main(int argc, char* argv[])
 				std::cout 	<< "Oscigen commands" << std::endl << std::endl
 							<< "-i\tSpecifies audio files used. First is master audio." << std::endl
 							<< "-o\tOutput file. Default is \"output.mp4\"." << std::endl
-							<< "-h\tHeadless mode, disables preview window." << std::endl
+							//TODO: Fix headless mode
+							<< "-h\tHeadless mode, disables preview window. (broken)" << std::endl
 							<< "-?\tPrints all available commands." << std::endl;
 				return -1;
 			} else {
@@ -84,16 +87,11 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
-	//TODO: Figure out a way to enable anti-aliasing on a RenderTexture and enable it
-	sf::RenderTexture target;
-	target.create(WINDOW_WIDTH, WINDOW_HEIGHT);
-
-	sf::RenderWindow* window = NULL;
-	sf::Sprite* previewSpr = NULL;
-	if(preview) {
-		window = new sf::RenderWindow(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Rendering...");
-		previewSpr = new sf::Sprite(target.getTexture());
-	}
+	//TODO: Figure out a way to enable anti-aliasing without using a RenderWindow
+	sf::ContextSettings settings(8, 8, 8);
+	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Rendering...", sf::Style::Default, settings);
+	sf::Texture capture;
+	capture.create(WINDOW_WIDTH, WINDOW_HEIGHT);
 
 	std::ostringstream cmd;
 	cmd << 	"ffmpeg -r 60 -f rawvideo -pix_fmt rgba -s 1280x720 -i - -i " << inputFiles[0] << " -strict -2 " <<
@@ -104,57 +102,42 @@ int main(int argc, char* argv[])
 	const uint32 numFrames = buffers[0]->getSampleCount() / buffers[0]->getChannelCount() / samplesPerFrame;
 	std::cout << "Preparing to render " << numFrames << " frames" << std::endl;
 
+	//TODO: Rendering could probably be faster if FFMPEG piping is on another thread than rendering
 	uint32 currentFrame = 0;
-	while(currentFrame < numFrames) {
-		uint32 sampleIndex = currentFrame * samplesPerFrame;
-
-		target.clear();
-
-		if(bufSize > 1) {
-			for (uint8 i = 0; i < bufSize - 1; i++) {
-				drawWaveform(target, *buffers[i + 1], sampleIndex, i, bufSize - 1, sampleLen);
-			}
-		} else {
-			drawWaveform(target, *buffers[0], sampleIndex, 0, 1, sampleLen);
+	while(currentFrame < numFrames && window.isOpen()) {
+		sf::Event event;
+		while(window.pollEvent(event)){
+			if(event.type == sf::Event::Closed)
+				window.close();
 		}
 
-		target.display();
 
-		sf::Image img = target.getTexture().copyToImage();
+		window.clear();
+
+		uint32 sampleIndex = currentFrame * samplesPerFrame;
+		if(bufSize > 1) {
+			for (uint8 i = 0; i < bufSize - 1; i++) {
+				drawWaveform(window, *buffers[i + 1], sampleIndex, i, bufSize - 1, sampleLen);
+			}
+		} else {
+			drawWaveform(window, *buffers[0], sampleIndex, 0, 1, sampleLen);
+		}
+
+		window.display();
+
+		capture.update(window);
+		sf::Image img = capture.copyToImage();
 		fwrite(img.getPixelsPtr(), WINDOW_WIDTH*WINDOW_HEIGHT*4, 1, ffmpeg);
 
 		currentFrame++;
-
-		if(window != NULL){
-			if(!window->isOpen()) {
-				delete(window);
-				delete(previewSpr);
-				window = NULL;
-				previewSpr = NULL;
-				break;
-			}
-
-			sf::Event event;
-			while(window->pollEvent(event)){
-				if(event.type == sf::Event::Closed)
-					window->close();
-			}
-
-			window->clear();
-			window->draw(*previewSpr);
-			window->display();
-
-			int progress = ceil(((float)currentFrame / (float)numFrames) * 10000) / 100;
-			std::ostringstream title;
-			title << "oscigen (" << progress << "%)";
-			window->setTitle(title.str());
-		}
+		int progress = ceil(((float)currentFrame / (float)numFrames) * 10000) / 100;
+		std::ostringstream title;
+		title << "oscigen (" << progress << "%)";
+		window.setTitle(title.str());
 	}
 
 	pclose(ffmpeg);
-
-	if(window != NULL)
-		window->close();
+	window.close();
 
 	return 0;
 }
@@ -180,44 +163,41 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 
 	playbackPos += centerSnap;
 
-	sf::Vector2f wavePos[length];
+	sf::Vector2f samplePoints[length];
 	for (uint16 i = 0; i < length; i++) {
 		short sample = 0;
 		uint32 samplePos = playbackPos + i * channels;
 		if(samplePos < numSamples)
 			sample = averageSample(samples, samplePos, channels);
 
-		wavePos[i] = sf::Vector2f(i * interval, verticalCenter - sample * invAmplitude);
+		samplePoints[i] = sf::Vector2f(i * interval, verticalCenter - sample * invAmplitude);
 	}
 
 	//TODO: Expose this as a command line argument
-	const float thickness = 3.0f;
-	const uint16 triCount = length * 2 - 4;
-	float quadDir = 1;
-	sf::Vertex vertices[triCount];
+	const float thickness = 4;
+	std::vector<sf::Vertex> vertices;
 	for(uint16 i = 1; i < length - 1; i++) {
-		//TODO: Fix issue with tightly packed triangles overlapping
-		//Happens usually in a corner, should probably try to reduce amount of sample points before triangulating
-		sf::Vector2f prev = wavePos[i] - wavePos[i - 1];
-		prev = normalize(prev);
-		sf::Vector2f prevN = sf::Vector2f(-prev.y, prev.x);
+		//TODO: Make sharp angles blunt to avoid "spikes"
+		//TODO: This can probably be optimized
+		sf::Vector2f pos = samplePoints[i];
+		sf::Vector2f l1 = normalize(samplePoints[i + 1] - pos);
+		sf::Vector2f l2 = normalize(pos - samplePoints[i - 1]);
+		sf::Vector2f n1(-l1.y, l1.x);
+		sf::Vector2f n2(-l2.y, l2.x);
+		sf::Vector2f tangent = normalize(l1 + l2);
+		sf::Vector2f miter(-tangent.y, tangent.x);
+		float length = thickness;
 
-		sf::Vector2f next = wavePos[i + 1] - wavePos[i];
-		next = normalize(next);
-		sf::Vector2f nextN = sf::Vector2f(-next.y, next.x);
+		float d = dot(miter, n2);
+		if(d != 0)
+			length /= d;
 
-		sf::Vector2f tangent = (prevN + nextN) * 0.5f;
-		tangent *= thickness * 0.5f;
-
-		sf::Vector2f pos = wavePos[i];
-		uint16 vertIndex = i * 2 - 2;
-		vertices[vertIndex] = pos - tangent;
-		vertices[vertIndex + 1] = pos + tangent;
-
-		quadDir = -quadDir;
+		miter *= length;
+		vertices.push_back(pos - miter);
+		vertices.push_back(pos + miter);
 	}
 
-	target.draw(vertices, triCount, sf::TrianglesStrip);
+	target.draw(vertices.data(), vertices.size(), sf::TrianglesStrip);
 }
 
 short averageSample(const short* samples, const uint32 startIndex, const uint8 count) {
