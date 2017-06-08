@@ -1,3 +1,4 @@
+#include <SFML/OpenGL.hpp>
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
 #include <iostream>
@@ -26,7 +27,7 @@ typedef unsigned short uint16;
 typedef unsigned int uint32;
 
 void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbackPos, const uint8 index, const uint8 count, const uint32 length);
-short averageSample(const short* samples, const uint32 startIndex, const uint8 count);
+short averageSample(const short* samples, const uint32 startIndex, const uint8 count, const uint32 length);
 
 int main(int argc, char* argv[])
 {
@@ -156,51 +157,82 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 	playbackPos *= channels;
 
 	uint16 centerSnap = 0;
-	while(averageSample(samples, playbackPos + centerSnap + length, channels) > 0)
+	while(averageSample(samples, playbackPos + centerSnap + length, channels, numSamples) > 0)
 		centerSnap += channels;
-	while(averageSample(samples, playbackPos + centerSnap + length, channels) < 0)
+	while(averageSample(samples, playbackPos + centerSnap + length, channels, numSamples) < 0)
 		centerSnap += channels;
 
 	playbackPos += centerSnap;
 
-	sf::Vector2f samplePoints[length];
-	for (uint16 i = 0; i < length; i++) {
-		short sample = 0;
-		uint32 samplePos = playbackPos + i * channels;
-		if(samplePos < numSamples)
-			sample = averageSample(samples, samplePos, channels);
+	const int averageCount = 2;
+	std::vector<sf::Vector2f> points;
+	for (uint16 i = 0; i < length; i+=2) {
+		int ampAverage = 0;
 
-		samplePoints[i] = sf::Vector2f(i * interval, verticalCenter - sample * invAmplitude);
+		for (uint8 s = 0; s < averageCount; s++) {
+			uint32 samplePos = playbackPos + (i + s) * channels;
+			ampAverage += averageSample(samples, samplePos, channels, numSamples);
+		}
+
+		ampAverage /= averageCount;
+		sf::Vector2f pos = sf::Vector2f(i * interval, verticalCenter - ampAverage * invAmplitude);
+		points.push_back(pos);
 	}
+
+	std::vector<sf::Vertex> lineVerts;
+	std::vector<sf::Vertex> triVerts;
+	sf::Vector2f prevPos(0, verticalCenter);
 
 	//TODO: Expose this as a command line argument
 	const float thickness = 4;
-	std::vector<sf::Vertex> vertices;
-	for(uint16 i = 1; i < length - 1; i++) {
+	glLineWidth(thickness);
+
+	const float cornerSegments = 4;
+
+	for(auto it = points.begin(); it != points.end(); it++) {
 		//TODO: Make sharp angles blunt to avoid "spikes"
 		//TODO: This can probably be optimized
-		sf::Vector2f pos = samplePoints[i];
-		sf::Vector2f l1 = normalize(samplePoints[i + 1] - pos);
-		sf::Vector2f l2 = normalize(pos - samplePoints[i - 1]);
-		sf::Vector2f n1(-l1.y, l1.x);
-		sf::Vector2f n2(-l2.y, l2.x);
-		sf::Vector2f tangent = normalize(l1 + l2);
-		sf::Vector2f miter(-tangent.y, tangent.x);
-		float length = thickness;
+		sf::Vector2f pos = *it;
+		sf::Vector2f nextPos = it != points.end() - 1 ? *(it + 1) : sf::Vector2f(pos.x + 1, pos.y);
 
-		float d = dot(miter, n2);
-		if(d != 0)
-			length /= d;
+		sf::Vector2f l1 = normalize(nextPos - pos);
+		sf::Vector2f n1(l1.y, -l1.x);
+		sf::Vector2f l2 = normalize(pos - prevPos);
+		sf::Vector2f n2(l2.y, -l2.x);
+		prevPos = pos;
 
-		miter *= length;
-		vertices.push_back(pos - miter);
-		vertices.push_back(pos + miter);
+		if(dot(n1, l2) < 0) {
+			n1 = -n1;
+			n2 = -n2;
+		}
+
+		float invSegment = 1.0f / cornerSegments;
+		sf::Vector2f s1;
+		sf::Vector2f s2 = n1;
+		s2 = normalize(s2);
+
+		for(int i = 1; i <= cornerSegments; i++) {
+			float s = invSegment * i;
+			s1 = s2;
+			s2 = n1 * (1 - s) + n2 * s;
+			s2 = normalize(s2);
+
+			triVerts.push_back(pos);
+			triVerts.push_back(pos + s1 * thickness * 0.5f);
+			triVerts.push_back(pos + s2 * thickness * 0.5f);
+		}
+
+		lineVerts.push_back(pos);
 	}
 
-	target.draw(vertices.data(), vertices.size(), sf::TrianglesStrip);
+	target.draw(lineVerts.data(), lineVerts.size(), sf::LinesStrip);
+	target.draw(triVerts.data(), triVerts.size(), sf::Triangles);
 }
 
-short averageSample(const short* samples, const uint32 startIndex, const uint8 count) {
+short averageSample(const short* samples, const uint32 startIndex, const uint8 count, const uint32 length) {
+	if(startIndex + count >= length)
+		return 0;
+
 	short result = 0;
 	for (uint32 i = startIndex; i < startIndex + count; i++) {
 		result += samples[i];
