@@ -7,6 +7,8 @@
 #include <climits>
 #include <cmath>
 #include <sstream>
+#include <functional>
+#include <queue>
 
 //Vector helper macros
 #define length(a) (float)sqrt((a).x*(a).x + (a).y*(a).y)
@@ -28,6 +30,7 @@ typedef unsigned int uint32;
 
 void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbackPos, const uint8 index, const uint8 count, const uint32 length);
 short averageSample(const short* samples, const uint32 startIndex, const uint8 count, const uint32 length);
+void encodeFrame(FILE* ffmpeg, sf::Mutex* mutex, std::queue<sf::Image>* buffer, bool* isDone);
 
 int main(int argc, char* argv[])
 {
@@ -89,7 +92,7 @@ int main(int argc, char* argv[])
 	}
 
 	//TODO: Figure out a way to enable anti-aliasing without using a RenderWindow
-	sf::ContextSettings settings(8, 8, 8);
+	sf::ContextSettings settings(8, 8, 16);
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Rendering...", sf::Style::Default, settings);
 	sf::Texture capture;
 	capture.create(WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -103,7 +106,14 @@ int main(int argc, char* argv[])
 	const uint32 numFrames = buffers[0]->getSampleCount() / buffers[0]->getChannelCount() / samplesPerFrame;
 	std::cout << "Preparing to render " << numFrames << " frames" << std::endl;
 
-	//TODO: Rendering could probably be faster if FFMPEG piping is on another thread than rendering
+	bool isDone = false;
+	std::queue<sf::Image> framebuffer;
+	sf::Mutex encodeMutex;
+	sf::Thread encodeThread(std::bind(&encodeFrame, ffmpeg, &encodeMutex, &framebuffer, &isDone));
+	encodeThread.launch();
+
+	//TODO: Rendering could probably be even faster if we could render multiple frames on separate threads
+	//		This requires that we get anti-aliasing working on RenderTextures
 	uint32 currentFrame = 0;
 	while(currentFrame < numFrames && window.isOpen()) {
 		sf::Event event;
@@ -111,7 +121,6 @@ int main(int argc, char* argv[])
 			if(event.type == sf::Event::Closed)
 				window.close();
 		}
-
 
 		window.clear();
 
@@ -125,10 +134,12 @@ int main(int argc, char* argv[])
 		}
 
 		window.display();
-
 		capture.update(window);
+
 		sf::Image img = capture.copyToImage();
-		fwrite(img.getPixelsPtr(), WINDOW_WIDTH*WINDOW_HEIGHT*4, 1, ffmpeg);
+		encodeMutex.lock();
+		framebuffer.push(img);
+		encodeMutex.unlock();
 
 		currentFrame++;
 		int progress = ceil(((float)currentFrame / (float)numFrames) * 10000) / 100;
@@ -137,10 +148,23 @@ int main(int argc, char* argv[])
 		window.setTitle(title.str());
 	}
 
+	isDone = true;
+	encodeThread.wait();
 	pclose(ffmpeg);
 	window.close();
 
 	return 0;
+}
+
+void encodeFrame(FILE* ffmpeg, sf::Mutex* mutex, std::queue<sf::Image>* buffer, bool* isDone) {
+	while(!*isDone) {
+		mutex->lock();
+		if(buffer->size() > 0) {
+			fwrite(buffer->front().getPixelsPtr(), WINDOW_WIDTH*WINDOW_HEIGHT*4, 1, ffmpeg);
+			buffer->pop();
+		}
+		mutex->unlock();
+	}
 }
 
 void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbackPos, const uint8 index, const uint8 count, const uint32 length) {
@@ -181,50 +205,57 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 
 	std::vector<sf::Vertex> lineVerts;
 	std::vector<sf::Vertex> triVerts;
-	sf::Vector2f prevPos(0, verticalCenter);
+	lineVerts.push_back(points.front());
+
+	sf::Vector2f prevPos = points[0];
+	sf::Vector2f currPos = points[1];
+
 
 	//TODO: Expose this as a command line argument
 	const float thickness = 4;
 	glLineWidth(thickness);
+	//TODO: Expose this as well?
+	const int maxSegments = 8;
 
-	const float cornerSegments = 4;
+	for(auto it = points.begin() + 1; it != points.end() - 1; it++) {
+		//TODO: This can probably be optimized even further
+		sf::Vector2f nextPos = *(it + 1);
 
-	for(auto it = points.begin(); it != points.end(); it++) {
-		//TODO: Make sharp angles blunt to avoid "spikes"
-		//TODO: This can probably be optimized
-		sf::Vector2f pos = *it;
-		sf::Vector2f nextPos = it != points.end() - 1 ? *(it + 1) : sf::Vector2f(pos.x + 1, pos.y);
-
-		sf::Vector2f l1 = normalize(nextPos - pos);
+		sf::Vector2f l1 = normalize(nextPos - currPos);
 		sf::Vector2f n1(l1.y, -l1.x);
-		sf::Vector2f l2 = normalize(pos - prevPos);
+		sf::Vector2f l2 = normalize(currPos - prevPos);
 		sf::Vector2f n2(l2.y, -l2.x);
-		prevPos = pos;
 
 		if(dot(n1, l2) < 0) {
 			n1 = -n1;
 			n2 = -n2;
 		}
 
-		float invSegment = 1.0f / cornerSegments;
+		int segments = ceil((1 - (1 + dot(n1, n2)) * 0.5) * maxSegments);
+		float invSegment = 1.0f / segments;
 		sf::Vector2f s1;
 		sf::Vector2f s2 = n1;
 		s2 = normalize(s2);
 
-		for(int i = 1; i <= cornerSegments; i++) {
+		for(int i = 1; i <= segments; i++) {
 			float s = invSegment * i;
 			s1 = s2;
 			s2 = n1 * (1 - s) + n2 * s;
 			s2 = normalize(s2);
 
-			triVerts.push_back(pos);
-			triVerts.push_back(pos + s1 * thickness * 0.5f);
-			triVerts.push_back(pos + s2 * thickness * 0.5f);
+			triVerts.push_back(currPos);
+			triVerts.push_back(currPos + s1 * thickness * 0.5f);
+			triVerts.push_back(currPos + s2 * thickness * 0.5f);
 		}
 
-		lineVerts.push_back(pos);
+		lineVerts.push_back(currPos);
+
+		prevPos = currPos;
+		currPos = nextPos;
 	}
 
+	lineVerts.push_back(points.back());
+	//TODO: Generate quads instead of LinesStrip in order to support thicker lines than what OpenGL supports
 	target.draw(lineVerts.data(), lineVerts.size(), sf::LinesStrip);
 	target.draw(triVerts.data(), triVerts.size(), sf::Triangles);
 }
