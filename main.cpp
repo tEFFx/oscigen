@@ -21,8 +21,8 @@
 #define clamp(a,b,c) ((a)<(b)?(b):((a)>(c)?(c):(a)))
 
 //TODO: Screen resolution should not be constant and probably be exposed as a command line argument
-#define WINDOW_WIDTH 1280
-#define WINDOW_HEIGHT 720
+#define WINDOW_WIDTH 1920
+#define WINDOW_HEIGHT 1080
 
 typedef unsigned char uint8;
 typedef unsigned short uint16;
@@ -98,7 +98,7 @@ int main(int argc, char* argv[])
 	capture.create(WINDOW_WIDTH, WINDOW_HEIGHT);
 
 	std::ostringstream cmd;
-	cmd << 	"ffmpeg -r 60 -f rawvideo -pix_fmt rgba -s 1280x720 -i - -i " << inputFiles[0] << " -strict -2 " <<
+	cmd << 	"ffmpeg -r 60 -f rawvideo -pix_fmt rgba -s " << WINDOW_WIDTH << "x" << WINDOW_HEIGHT << " -i - -i " << inputFiles[0] << " -strict -2 " <<
 			"-threads 0 -preset fast -y -pix_fmt yuv420p -crf 21 " << outputFile;
 	FILE* ffmpeg = popen(cmd.str().c_str(), "w");
 
@@ -114,6 +114,7 @@ int main(int argc, char* argv[])
 
 	//TODO: Rendering could probably be even faster if we could render multiple frames on separate threads
 	//		This requires that we get anti-aliasing working on RenderTextures
+	//		Probably limited by FFmpeg encoding speed though
 	uint32 currentFrame = 0;
 	while(currentFrame < numFrames && window.isOpen()) {
 		sf::Event event;
@@ -203,16 +204,12 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 		points.push_back(pos);
 	}
 
-	std::vector<sf::Vertex> lineVerts;
 	std::vector<sf::Vertex> triVerts;
-	lineVerts.push_back(points.front());
-
 	sf::Vector2f prevPos = points[0];
 	sf::Vector2f currPos = points[1];
 
-
 	//TODO: Expose this as a command line argument
-	const float thickness = 4;
+	const float thickness = 8;
 	glLineWidth(thickness);
 	//TODO: Expose this as well?
 	const int maxSegments = 8;
@@ -248,15 +245,19 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 			triVerts.push_back(currPos + s2 * thickness * 0.5f);
 		}
 
-		lineVerts.push_back(currPos);
+		n2 *= thickness * 0.5f;
+		triVerts.push_back(prevPos + n2);
+		triVerts.push_back(prevPos - n2);
+		triVerts.push_back(currPos + n2);
+
+		triVerts.push_back(prevPos - n2);
+		triVerts.push_back(currPos + n2);
+		triVerts.push_back(currPos - n2);
 
 		prevPos = currPos;
 		currPos = nextPos;
 	}
 
-	lineVerts.push_back(points.back());
-	//TODO: Generate quads instead of LinesStrip in order to support thicker lines than what OpenGL supports
-	target.draw(lineVerts.data(), lineVerts.size(), sf::LinesStrip);
 	target.draw(triVerts.data(), triVerts.size(), sf::Triangles);
 }
 
