@@ -1,7 +1,7 @@
 CC=g++
 CFLAGS=-c -Wall -std=c++11
 LDFLAGS=-lsfml-graphics -lsfml-window -lsfml-system -lsfml-audio -lGL
-SOURCES=main.cpp
+SOURCES=main.cpp lib/tinyfiledialogs.c
 OBJECTS=$(SOURCES:.cpp=.o)
 EXECUTABLE=oscigen
 

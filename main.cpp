@@ -1,3 +1,4 @@
+#include "lib/tinyfiledialogs.h"
 #include <SFML/OpenGL.hpp>
 #include <SFML/Graphics.hpp>
 #include <SFML/Audio.hpp>
@@ -11,14 +12,14 @@
 #include <queue>
 
 //Vector helper macros
-#define length(a) (float)sqrt((a).x*(a).x + (a).y*(a).y)
-#define normalize(a) (a) / length(a)
-#define dot(a,b) ((a).x*(b).x)+((a).y*(b).y)
-#define project(a,b) (a)*(dot(a,b)/(length(a)*length(a)))
+#define vlength(a) (float)sqrt((a).x*(a).x + (a).y*(a).y)
+#define vnormalize(a) (a) / vlength(a)
+#define vdot(a,b) ((a).x*(b).x)+((a).y*(b).y)
+#define vproject(a,b) (a)*(vdot(a,b)/(vlength(a)*vlength(a)))
 
 //Math helper macros
-#define sign(a) (a==0 ? 0 : (a>0 ? 1 : -1))
-#define clamp(a,b,c) ((a)<(b)?(b):((a)>(c)?(c):(a)))
+#define msign(a) (a==0 ? 0 : (a>0 ? 1 : -1))
+#define mclamp(a,b,c) ((a)<(b)?(b):((a)>(c)?(c):(a)))
 
 //TODO: Screen resolution should not be constant and probably be exposed as a command line argument
 #define WINDOW_WIDTH 1920
@@ -41,36 +42,71 @@ int main(int argc, char* argv[])
 	std::string outputFile = "output.mp4";
 	std::vector<std::string> inputFiles;
 
-	std::string prevCmd = "";
-	for(uint8 i = 1; i < argc; i++) {
-		std::string cmd = std::string(argv[i]);
+	if(argc == 1) {
+		char const * openFilters[] = { "*.wav" };
+		char const * saveFilters[] = { "*.mp4" };
+		const char* path = tinyfd_openFileDialog("Select master audio", NULL, 1, openFilters, "Wave-files", 0);
+		if(path == NULL)
+			return -1;
+		
+		inputFiles.push_back(path);
+		
+		path = tinyfd_openFileDialog("Select waveform channels", NULL, 1, openFilters, "Wave-files", 1);
+		if(path == NULL)
+			return -1;
 
-		if(prevCmd != "" && cmd[0] != '-') {
-			if(prevCmd == "-i") {
-				std::string input = std::string(argv[i]);
-				inputFiles.push_back(input);
-				std::cout << "Input:" << input << std::endl;
-			} else if(prevCmd == "-o") {
-				outputFile = std::string(argv[i]);
-				std::cout << "Output: " << outputFile << std::endl;
-			}
-		} else {
-			//TODO: Add command line argument for gain
-			if(cmd == "-i" || cmd == "-o") {
-				prevCmd = std::string(argv[i]);
-			} else if(cmd == "-h") {
-				preview = false;
-			} else if(cmd == "-?") {
-				std::cout 	<< "Oscigen commands" << std::endl << std::endl
-							<< "-i\tSpecifies audio files used. First is master audio." << std::endl
-							<< "-o\tOutput file. Default is \"output.mp4\"." << std::endl
-							//TODO: Fix headless mode
-							<< "-h\tHeadless mode, disables preview window. (broken)" << std::endl
-							<< "-?\tPrints all available commands." << std::endl;
-				return -1;
+		std::string paths = path;
+		std::string delimiter = "|";
+		size_t pos = 0;
+		std::string token;
+		while((pos = paths.find(delimiter)) != std::string::npos) {
+			token = paths.substr(0, pos);
+			inputFiles.push_back(token);
+			paths.erase(0, pos + delimiter.length());
+		}
+
+		inputFiles.push_back(paths);
+
+		//TODO: Set thickness/color(s)/other settings
+
+		std::string output = tinyfd_saveFileDialog("Set output file", NULL, 1, saveFilters, "MP4 video");
+		if(paths.find(".mp4") == std::string::npos)
+			output += ".mp4";
+			
+		outputFile = output;
+
+	} else {
+		std::string prevCmd = "";
+		for(uint8 i = 1; i < argc; i++) {
+			std::string cmd = std::string(argv[i]);
+
+			if(prevCmd != "" && cmd[0] != '-') {
+				if(prevCmd == "-i") {
+					std::string input = std::string(argv[i]);
+					inputFiles.push_back(input);
+					std::cout << "Input:" << input << std::endl;
+				} else if(prevCmd == "-o") {
+					outputFile = std::string(argv[i]);
+					std::cout << "Output: " << outputFile << std::endl;
+				}
 			} else {
-				std::cout << cmd << " is not a recognised command! Use -? for list of available commands." << std::endl;
-				return -1;
+				//TODO: Add command line argument for gain
+				if(cmd == "-i" || cmd == "-o") {
+					prevCmd = std::string(argv[i]);
+				} else if(cmd == "-h") {
+					preview = false;
+				} else if(cmd == "-?") {
+					std::cout 	<< "Oscigen commands" << std::endl << std::endl
+								<< "-i\tSpecifies audio files used. First is master audio." << std::endl
+								<< "-o\tOutput file. Default is \"output.mp4\"." << std::endl
+								//TODO: Fix headless mode
+								<< "-h\tHeadless mode, disables preview window. (broken)" << std::endl
+								<< "-?\tPrints all available commands." << std::endl;
+					return -1;
+				} else {
+					std::cout << cmd << " is not a recognised command! Use -? for list of available commands." << std::endl;
+					return -1;
+				}
 			}
 		}
 	}
@@ -209,7 +245,7 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 	sf::Vector2f currPos = points[1];
 
 	//TODO: Expose this as a command line argument
-	const float thickness = 8;
+	const float thickness = 4;
 	glLineWidth(thickness);
 	//TODO: Expose this as well?
 	const int maxSegments = 8;
@@ -218,27 +254,27 @@ void drawWaveform(sf::RenderTarget& target, sf::SoundBuffer& buffer, int playbac
 		//TODO: This can probably be optimized even further
 		sf::Vector2f nextPos = *(it + 1);
 
-		sf::Vector2f l1 = normalize(nextPos - currPos);
+		sf::Vector2f l1 = vnormalize(nextPos - currPos);
 		sf::Vector2f n1(l1.y, -l1.x);
-		sf::Vector2f l2 = normalize(currPos - prevPos);
+		sf::Vector2f l2 = vnormalize(currPos - prevPos);
 		sf::Vector2f n2(l2.y, -l2.x);
 
-		if(dot(n1, l2) < 0) {
+		if(vdot(n1, l2) < 0) {
 			n1 = -n1;
 			n2 = -n2;
 		}
 
-		int segments = ceil((1 - (1 + dot(n1, n2)) * 0.5) * maxSegments);
+		int segments = ceil((1 - (1 + vdot(n1, n2)) * 0.5) * maxSegments);
 		float invSegment = 1.0f / segments;
 		sf::Vector2f s1;
 		sf::Vector2f s2 = n1;
-		s2 = normalize(s2);
+		s2 = vnormalize(s2);
 
 		for(int i = 1; i <= segments; i++) {
 			float s = invSegment * i;
 			s1 = s2;
 			s2 = n1 * (1 - s) + n2 * s;
-			s2 = normalize(s2);
+			s2 = vnormalize(s2);
 
 			triVerts.push_back(currPos);
 			triVerts.push_back(currPos + s1 * thickness * 0.5f);
