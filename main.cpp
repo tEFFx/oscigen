@@ -69,9 +69,15 @@ int main(int argc, char* argv[])
 
 		//TODO: Set thickness/color(s)/other settings
 
-		std::string output = tinyfd_saveFileDialog("Set output file", NULL, 1, saveFilters, "MP4 video");
-		if(paths.find(".mp4") == std::string::npos)
+		path = tinyfd_saveFileDialog("Set output file", NULL, 1, saveFilters, "MP4 video");
+		if (path == NULL)
+			return -1;
+
+		std::string output = path;
+		if (output.find(".mp4") == std::string::npos) {
+			std::cout << "File ending missing!" << std::endl;
 			output += ".mp4";
+		}
 			
 		outputFile = output;
 
@@ -114,6 +120,7 @@ int main(int argc, char* argv[])
 	std::vector<sf::SoundBuffer*> buffers;
 	for (uint8 i = 0; i < inputFiles.size(); i++) {
 		sf::SoundBuffer* buffer = new sf::SoundBuffer();
+		std::cout << "Loading " << inputFiles[i] << "..." << std::endl;
 		if(buffer->loadFromFile(inputFiles[i])) {
 			buffers.push_back(buffer);
 		} else {
@@ -127,6 +134,8 @@ int main(int argc, char* argv[])
 		return -1;
 	}
 
+	std::cout << "Trying to open window!" << std::endl;
+
 	//TODO: Figure out a way to enable anti-aliasing without using a RenderWindow
 	sf::ContextSettings settings(8, 8, 16);
 	sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Rendering...", sf::Style::Default, settings);
@@ -136,7 +145,13 @@ int main(int argc, char* argv[])
 	std::ostringstream cmd;
 	cmd << 	"ffmpeg -r 60 -f rawvideo -pix_fmt rgba -s " << WINDOW_WIDTH << "x" << WINDOW_HEIGHT << " -i - -i " << inputFiles[0] << " -strict -2 " <<
 			"-threads 0 -preset fast -y -pix_fmt yuv420p -crf 21 " << outputFile;
+#if WIN32
+	FILE* ffmpeg = _popen(cmd.str().c_str(), "w");
+	if (!ffmpeg)
+		std::cout << "Failed to open pipe!!!" << std::endl;
+#else
 	FILE* ffmpeg = popen(cmd.str().c_str(), "w");
+#endif
 
 	const uint16 samplesPerFrame = buffers[0]->getSampleRate() / 60;
 	const uint32 numFrames = buffers[0]->getSampleCount() / buffers[0]->getChannelCount() / samplesPerFrame;
@@ -187,7 +202,11 @@ int main(int argc, char* argv[])
 
 	isDone = true;
 	encodeThread.wait();
+#if WIN32
+	_pclose(ffmpeg);
+#else
 	pclose(ffmpeg);
+#endif
 	window.close();
 
 	return 0;

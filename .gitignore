@@ -3,7 +3,14 @@
 [Ww]av
 [Tt]emp
 [Ll]ib
+[Dd]ebug
+[Rr]elease
+.vs/
 
 *.o
 *.mp4
 *.wav
+*.filters
+*.db
+*.opendb
+*.user
