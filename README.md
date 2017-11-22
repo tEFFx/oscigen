@@ -3,8 +3,7 @@ Generates oscilloscope views for chiptunes
 
 Requires [SFML](https://www.sfml-dev.org/) and [Tiny File Dialogs](https://sourceforge.net/projects/tinyfiledialogs/).
 
-Command line arguments:
-
+## Command line arguments
 ```
 -i	Specifies input audio files (master, voice1, voice2 etc.)
 -o	Specifies output file
@@ -12,8 +11,7 @@ Command line arguments:
 -?	Prints list of commands
 ```
 
-Usage:
-
+## Usage
 ```
 ./oscigen -i master.wav 1.wav 2.wav 3.wav -o scopeview.mp4
 ```
